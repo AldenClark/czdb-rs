@@ -62,27 +62,16 @@ impl GeoDataDecryptor {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CzError {
-    /// 读取数据库文件失败
     #[error("Failed to read the database file: {0}")]
     DatabaseFileReadError(#[from] std::io::Error),
-
-    /// 解码密钥失败
     #[error("Failed to decode the key from base64: {0}")]
     KeyDecodingError(#[from] base64::DecodeError),
-
-    /// 解密操作失败
     #[error("Decryption operation failed")]
     DecryptionError,
-
-    /// 客户端 ID 无效
     #[error("Invalid client ID")]
     InvalidClientId,
-
-    /// 数据库已过期
     #[error("The database file has expired")]
     DatabaseExpired,
-
-    /// 数据库文件格式或内容有误
     #[error("The database file is corrupted or contains invalid data")]
     DatabaseFileCorrupted,
 }
@@ -138,6 +127,7 @@ impl Czdb {
                 .map(&file)
         }?;
         let mut bindata = Cursor::new(mmap);
+
         //读取super part
         let db_type = if bindata.read_u8()? & 1 == 0 {
             DbType::Ipv4
