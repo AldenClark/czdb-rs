@@ -8,7 +8,7 @@ readme = "README.MD"
 repository = "https://github.com/AldenClark/czdb-rs"
 documentation = "https://docs.rs/czdb"
 keywords = ["czdb", "ip", "ipv4", "ipv6"]
-categories = ["Parsing tools"]
+categories = ["parsing", "science::geo"]
 description = "A pure Rust library for parsing CZDB-format IP databases."
 
 [dependencies]
