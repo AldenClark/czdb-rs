@@ -1,3 +1,94 @@
+//! # CZDB Database Library
+//!
+//! A Rust library for parsing and querying CZ-format IP geolocation databases.
+//!
+//! ## Features
+//! - Supports both IPv4 and IPv6 address queries.
+//! - Implements efficient binary search for IP data lookup.
+//! - Optimized memory usage and query performance using memory-mapped files (mmap).
+//!
+//! ## Usage
+//!
+//! 1. Create a `Czdb` instance by loading the database file and providing a decryption key:
+//! ```rust
+//! use czdb::Czdb;
+//!
+//! let db_path = "path/to/your/czdb_file";
+//! let key = "your_base64_key";
+//! let czdb = Czdb::new(db_path, key).expect("Failed to load database");
+//! ```
+//!
+//! 2. Search for IP address geolocation data:
+//! ```rust
+//! use std::net::IpAddr;
+//!
+//! let ip: IpAddr = "8.8.8.8".parse().unwrap();
+//! if let Some(location) = czdb.search(ip) {
+//!     println!("Location for IP {}: {}", ip, location);
+//! } else {
+//!     println!("No location data found for IP {}", ip);
+//! }
+//! ```
+//!
+//! ## Error Handling
+//! The following errors might occur when loading the database:
+//! - `DatabaseFileReadError`: Failed to read the database file.
+//! - `KeyDecodingError`: Invalid base64 format for the decryption key.
+//! - `DecryptionError`: Decryption failed.
+//! - `InvalidClientId`: The client ID in the database file is invalid.
+//! - `DatabaseExpired`: The database file has expired.
+//! - `DatabaseFileCorrupted`: The database file is corrupted or contains invalid data.
+//!
+//! ## Notes
+//! - The database file must be in a supported CZDB format, and the decryption key must be in valid Base64 format.
+//! - The type of IP address queried must match the database type (IPv4 or IPv6).
+//! - The database file and key must be obtained from [www.cz88.net](https://cz88.net/geo-public).
+//!
+//! # 纯真CZDB解析库
+//!
+//! 这是一个用于解析和查询 CZ 格式 IP 地理位置数据库的 Rust 库。
+//!
+//! ## 功能
+//! - 支持 IPv4 和 IPv6 地址查询。
+//! - 提供高效的二分查找算法定位 IP 数据。
+//! - 通过mmap优化内存占用和查询性能
+//!
+//! ## 使用方法
+//!
+//! 1. 创建 `Czdb` 实例，加载数据库文件并提供解密密钥：
+//! ```rust
+//! use czdb::Czdb;
+//!
+//! let db_path = "path/to/your/czdb_file";
+//! let key = "your_base64_key";
+//! let czdb = Czdb::new(db_path, key).expect("Failed to load database");
+//! ```
+//!
+//! 2. 查询 IP 地址对应的地理位置数据：
+//! ```rust
+//! use std::net::IpAddr;
+//! let ip: IpAddr = "8.8.8.8".parse().unwrap();
+//! if let Some(location) = czdb.search(ip) {
+//!     println!("Location for IP {}: {}", ip, location);
+//! } else {
+//!     println!("No location data found for IP {}", ip);
+//! }
+//! ```
+//!
+//! ## 错误处理
+//! 加载数据库时可能会遇到以下错误：
+//! - `DatabaseFileReadError`: 数据库文件读取失败。
+//! - `KeyDecodingError`: 解密密钥格式无效。
+//! - `DecryptionError`: 解密失败。
+//! - `InvalidClientId`: 数据库文件的客户端 ID 无效。
+//! - `DatabaseExpired`: 数据库文件已过期。
+//! - `DatabaseFileCorrupted`: 数据库文件损坏或数据无效。
+//!
+//! ## 注意事项
+//! - 数据库文件需要是支持的 CZDB 格式，且加密密钥需为有效的 Base64 格式。
+//! - 查询的 IP 地址类型必须与数据库类型 (IPv4 或 IPv6) 匹配。
+//! - 具体的数据库文件和密钥，请从 [www.cz88.net](https://cz88.net/geo-public) 获取。
+
 use aes::{
     cipher::{Key, KeyInit},
     Aes128,
@@ -15,24 +106,29 @@ use std::{
     vec,
 };
 
+/// Represents the type of database (IPv4 or IPv6).
+/// Provides utility methods for operations related to IP types.
 #[derive(Debug)]
 enum DbType {
     Ipv4,
     Ipv6,
 }
 impl DbType {
+    /// Checks whether the given `IpAddr` matches the database type.
     pub fn compare(&self, ip: &IpAddr) -> bool {
         match self {
             DbType::Ipv4 => ip.is_ipv4(),
             DbType::Ipv6 => ip.is_ipv6(),
         }
     }
+    /// Returns the length of an index block for the database type.
     pub fn index_block_len(&self) -> usize {
         match self {
             DbType::Ipv4 => 13,
             DbType::Ipv6 => 37,
         }
     }
+    /// Returns the length of the bytes for the database type (IPv4: 4 bytes, IPv6: 16 bytes).
     pub fn bytes_len(&self) -> usize {
         match self {
             DbType::Ipv4 => 4,
@@ -41,16 +137,19 @@ impl DbType {
     }
 }
 
+/// Provides decryption functionality for geo data using a key.
+#[derive(Debug)]
 struct GeoDataDecryptor {
     key_bytes: Vec<u8>,
 }
 
 impl GeoDataDecryptor {
+    /// Creates a new decryptor using a base64-encoded key.
     fn new(base64_key: &str) -> Result<Self, base64::DecodeError> {
         let key_bytes = general_purpose::STANDARD.decode(base64_key)?;
         Ok(Self { key_bytes })
     }
-
+    /// Decrypts the input data using XOR with the stored key.
     fn decrypt(&self, data: &[u8]) -> Vec<u8> {
         let key_length = self.key_bytes.len();
         data.iter()
@@ -60,6 +159,7 @@ impl GeoDataDecryptor {
     }
 }
 
+/// Enum representing possible errors in the CZ database operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CzError {
     #[error("Failed to read the database file: {0}")]
@@ -76,6 +176,8 @@ pub enum CzError {
     DatabaseFileCorrupted,
 }
 
+/// Represents a CZDB database, providing methods to load and search the database for IP geolocation data.
+#[derive(Debug)]
 pub struct Czdb {
     bindata: Mmap,
     index_blocks: BTreeMap<Vec<u8>, u32>,
@@ -85,17 +187,22 @@ pub struct Czdb {
 }
 
 impl Czdb {
+    /// Creates a new `Czdb` instance by loading the database from the given file path and decryption key.
+    ///
+    /// # Arguments
+    /// - `db_path`: The path to the database file.
+    /// - `key`: The base64-encoded decryption key.
+    ///
+    /// # Errors
+    /// - Returns a `CzError` if the database cannot be read, decrypted, or is invalid.
     pub fn new(db_path: &str, key: &str) -> Result<Self, CzError> {
-        //初始化
         let key_bytes = general_purpose::STANDARD.decode(&key)?;
         let mut file = File::open(db_path)?;
 
-        //读取头部
         let _version = file.read_u32::<LittleEndian>()?;
         let client_id = file.read_u32::<LittleEndian>()?;
         let encrypted_block_size = file.read_u32::<LittleEndian>()?;
 
-        //读取并处理加密区域
         let mut encrypted_bytes = vec![0; encrypted_block_size as usize];
         file.read_exact(&mut encrypted_bytes)?;
         let cipher = Aes128::new(Key::<Aes128>::from_slice(&key_bytes));
@@ -103,7 +210,6 @@ impl Czdb {
             .decrypt_padded_mut::<NoPadding>(&mut encrypted_bytes)
             .map_err(|_| CzError::DecryptionError)?;
 
-        //校验参数是否匹配
         let first_u32 = decrypted_bytes.read_u32::<LittleEndian>()?;
         if first_u32 >> 20 != client_id {
             return Err(CzError::InvalidClientId);
@@ -117,10 +223,8 @@ impl Czdb {
             return Err(CzError::DatabaseExpired);
         };
 
-        //留空长度
         let padding_size = decrypted_bytes.read_u32::<LittleEndian>()?;
 
-        //读取剩余内容
         let mmap = unsafe {
             MmapOptions::new()
                 .offset((12 + padding_size + encrypted_block_size) as u64)
@@ -128,7 +232,6 @@ impl Czdb {
         }?;
         let mut bindata = Cursor::new(mmap);
 
-        //读取super part
         let db_type = if bindata.read_u8()? & 1 == 0 {
             DbType::Ipv4
         } else {
@@ -143,7 +246,6 @@ impl Czdb {
         let end_index = bindata.read_u32::<LittleEndian>()?;
         let _total_index_blocks = (end_index - start_index) / db_type.index_block_len() as u32 + 1;
 
-        //读取头部信息
         let total_header_block = total_header_block_size / 20;
         let mut buffer = [0; 20];
         let mut index_blocks = BTreeMap::new();
@@ -154,7 +256,6 @@ impl Czdb {
             index_blocks.insert(ip, data_ptr);
         }
 
-        //读取geo map
         let column_selection_ptr = end_index + db_type.index_block_len() as u32;
         bindata.seek(SeekFrom::Start(column_selection_ptr as u64))?;
         let column_selection = bindata.read_u32::<LittleEndian>()?;
@@ -176,6 +277,14 @@ impl Czdb {
         })
     }
 
+    /// Searches the database for the given IP address and returns its geolocation data, if found.
+    ///
+    /// # Arguments
+    /// - `ip`: The IP address to search for.
+    ///
+    /// # Returns
+    /// - `Some(String)` containing the geolocation data if found.
+    /// - `None` if the IP address is not in the database or there is an error.
     pub fn search(&self, ip: IpAddr) -> Option<String> {
         if !self.db_type.compare(&ip) {
             return None;
@@ -193,7 +302,6 @@ impl Czdb {
 
         let ip_len = self.db_type.bytes_len();
 
-        //开始二分查找
         let mut l = 0;
         let mut r = (end_ptr as usize - *start_ptr as usize) / block_len;
         while l <= r {
@@ -230,9 +338,8 @@ impl Czdb {
                 if geo_pos_mix_size == 0 {
                     return Some(other_data);
                 }
-                // 提取数据长度和指针
-                let data_len = ((geo_pos_mix_size >> 24) & 0xff) as usize; // 高 8 位为长度
-                let data_ptr = (geo_pos_mix_size & 0x00ffffff) as usize; // 低 24 位为指针
+                let data_len = ((geo_pos_mix_size >> 24) & 0xff) as usize;
+                let data_ptr = (geo_pos_mix_size & 0x00ffffff) as usize;
                 if let Some(geo_map_data) = &self.geo_map_data {
                     if geo_map_data.len() >= data_ptr + data_len {
                         let mut region_data =
@@ -260,10 +367,12 @@ impl Czdb {
                     }
                 };
                 return None;
-            } else if start_ip > &ip_bytes {
+            } else if start_ip > &ip_bytes && r != 0 {
                 r = m - 1;
-            } else {
+            } else if end_ip < &ip_bytes && l != m {
                 l = m + 1;
+            } else {
+                return None;
             }
         }
 

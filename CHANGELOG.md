@@ -1,3 +1,8 @@
+## v0.1.1
+
+- Fixed several bugs to improve stability.
+- Enhanced documentation with clearer usage examples and feature descriptions.
+
 ## v0.1.0 - Initial Release
 
 - First release of czdb-rs.

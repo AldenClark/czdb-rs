@@ -15,8 +15,19 @@ cargo add czdb
 ```
 
 ```rust
-let czdb = Czdb::new("Your database file path","Your Key").unwrap();
-let ip = IpAddr::from_str("1.0.0.1").unwrap();
-let region = czdb.search(ip);
-println!("{:?}", region);
+use czdb::Czdb;
+
+let db_path = "path/to/your/czdb_file";
+let key = "your_base64_key";
+let czdb = Czdb::new(db_path, key).expect("Failed to load database");
+```
+
+```rust
+use std::net::IpAddr;
+let ip: IpAddr = "8.8.8.8".parse().unwrap();
+if let Some(location) = czdb.search(ip) {
+    println!("Location for IP {}: {}", ip, location);
+} else {
+    println!("No location data found for IP {}", ip);
+}
 ```
