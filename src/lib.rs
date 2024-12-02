@@ -46,7 +46,7 @@
 //!
 //! # 纯真CZDB解析库
 //!
-//! 这是一个用于解析和查询 CZ 格式 IP 地理位置数据库的 Rust 库。
+//! 这是一个用于解析和查询 CZDB 格式 IP 地理位置数据库的 Rust 库。
 //!
 //! ## 功能
 //! - 支持 IPv4 和 IPv6 地址查询。
@@ -241,10 +241,9 @@ impl Czdb {
         if file.metadata()?.len() != (padding_size + encrypted_block_size + 12 + file_size) as u64 {
             return Err(CzError::DatabaseFileCorrupted);
         }
-        let start_index = bindata.read_u32::<LittleEndian>()?;
+        let _start_index = bindata.read_u32::<LittleEndian>()?;
         let total_header_block_size = bindata.read_u32::<LittleEndian>()?;
         let end_index = bindata.read_u32::<LittleEndian>()?;
-        let _total_index_blocks = (end_index - start_index) / db_type.index_block_len() as u32 + 1;
 
         let total_header_block = total_header_block_size / 20;
         let mut buffer = [0; 20];
