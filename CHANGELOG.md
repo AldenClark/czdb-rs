@@ -1,3 +1,7 @@
+## v0.1.2
+
+- Fixed a binary search indexing bug in the `search` method.
+
 ## v0.1.1
 
 - Fixed several bugs to improve stability.

@@ -302,7 +302,7 @@ impl Czdb {
         let ip_len = self.db_type.bytes_len();
 
         let mut l = 0;
-        let mut r = (end_ptr as usize - *start_ptr as usize) / block_len;
+        let mut r = (end_ptr as usize - *start_ptr as usize) / block_len - 1;
         while l <= r {
             let m = (l + r) >> 1;
             let p = *start_ptr as usize + m * block_len;
