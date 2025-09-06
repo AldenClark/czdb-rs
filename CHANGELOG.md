@@ -1,3 +1,7 @@
+## v0.1.2
+
+- Added multiple database readers: standard `BufReader`, optional `mmap` (feature), and in-memory loading.
+
 ## v0.1.1
 
 - Fixed several bugs to improve stability.
