@@ -5,12 +5,12 @@
 //! ## Features
 //! - Supports both IPv4 and IPv6 address queries.
 //! - Implements efficient binary search for IP data lookup.
-//! - Optimized memory usage and query performance using memory-mapped files (mmap).
+//! - Optional memory-mapped file support (`mmap` feature) for optimized memory usage and query performance.
 //!
 //! ## Usage
 //!
 //! 1. Create a `Czdb` instance by loading the database file and providing a decryption key:
-//! ```rust
+//! ```rust,ignore
 //! use czdb::Czdb;
 //!
 //! let db_path = "path/to/your/czdb_file";
@@ -19,7 +19,7 @@
 //! ```
 //!
 //! 2. Search for IP address geolocation data:
-//! ```rust
+//! ```rust,ignore
 //! use std::net::IpAddr;
 //!
 //! let ip: IpAddr = "8.8.8.8".parse().unwrap();
@@ -51,12 +51,12 @@
 //! ## 功能
 //! - 支持 IPv4 和 IPv6 地址查询。
 //! - 提供高效的二分查找算法定位 IP 数据。
-//! - 通过mmap优化内存占用和查询性能
+//! - 可选的 mmap 支持（`mmap` feature）以优化内存占用和查询性能
 //!
 //! ## 使用方法
 //!
 //! 1. 创建 `Czdb` 实例，加载数据库文件并提供解密密钥：
-//! ```rust
+//! ```rust,ignore
 //! use czdb::Czdb;
 //!
 //! let db_path = "path/to/your/czdb_file";
@@ -65,7 +65,7 @@
 //! ```
 //!
 //! 2. 查询 IP 地址对应的地理位置数据：
-//! ```rust
+//! ```rust,ignore
 //! use std::net::IpAddr;
 //! let ip: IpAddr = "8.8.8.8".parse().unwrap();
 //! if let Some(location) = czdb.search(ip) {
@@ -96,15 +96,38 @@ use aes::{
 use base64::{engine::general_purpose, Engine};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cipher::{block_padding::NoPadding, BlockDecryptMut};
+#[cfg(feature = "mmap")]
 use memmap2::{Mmap, MmapOptions};
 use rmpv::{decode::read_value, Value};
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     net::IpAddr,
+    ops::Deref,
     vec,
 };
+
+/// Container for database binary data, which can be backed by a `Vec<u8>`
+/// or a memory-mapped file when the `mmap` feature is enabled.
+#[derive(Debug)]
+enum DbBytes {
+    Vec(Vec<u8>),
+    #[cfg(feature = "mmap")]
+    Mmap(Mmap),
+}
+
+impl Deref for DbBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            DbBytes::Vec(v) => v.as_slice(),
+            #[cfg(feature = "mmap")]
+            DbBytes::Mmap(m) => m,
+        }
+    }
+}
 
 /// Represents the type of database (IPv4 or IPv6).
 /// Provides utility methods for operations related to IP types.
@@ -179,7 +202,7 @@ pub enum CzError {
 /// Represents a CZDB database, providing methods to load and search the database for IP geolocation data.
 #[derive(Debug)]
 pub struct Czdb {
-    bindata: Mmap,
+    bindata: DbBytes,
     index_blocks: BTreeMap<Vec<u8>, u32>,
     db_type: DbType,
     column_selection: u32,
@@ -187,15 +210,59 @@ pub struct Czdb {
 }
 
 impl Czdb {
-    /// Creates a new `Czdb` instance by loading the database from the given file path and decryption key.
+    /// Creates a new `Czdb` instance using a standard `BufReader`.
     ///
     /// # Arguments
     /// - `db_path`: The path to the database file.
     /// - `key`: The base64-encoded decryption key.
-    ///
-    /// # Errors
-    /// - Returns a `CzError` if the database cannot be read, decrypted, or is invalid.
     pub fn new(db_path: &str, key: &str) -> Result<Self, CzError> {
+        let key_bytes = general_purpose::STANDARD.decode(&key)?;
+        let mut file = File::open(db_path)?;
+        let mut reader = BufReader::new(&mut file);
+
+        let _version = reader.read_u32::<LittleEndian>()?;
+        let client_id = reader.read_u32::<LittleEndian>()?;
+        let encrypted_block_size = reader.read_u32::<LittleEndian>()?;
+
+        let mut encrypted_bytes = vec![0; encrypted_block_size as usize];
+        reader.read_exact(&mut encrypted_bytes)?;
+        let cipher = Aes128::new(Key::<Aes128>::from_slice(&key_bytes));
+        let mut decrypted_bytes = cipher
+            .decrypt_padded_mut::<NoPadding>(&mut encrypted_bytes)
+            .map_err(|_| CzError::DecryptionError)?;
+
+        let first_u32 = decrypted_bytes.read_u32::<LittleEndian>()?;
+        if first_u32 >> 20 != client_id {
+            return Err(CzError::InvalidClientId);
+        }
+        let now: u32 = chrono::Local::now()
+            .format("%y%m%d")
+            .to_string()
+            .parse()
+            .map_err(|_| CzError::DatabaseFileCorrupted)?;
+        if now > first_u32 & 0xFFFFF {
+            return Err(CzError::DatabaseExpired);
+        };
+
+        let padding_size = decrypted_bytes.read_u32::<LittleEndian>()?;
+        let offset = 12 + padding_size + encrypted_block_size;
+        reader.seek(SeekFrom::Start(offset as u64))?;
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data)?;
+        let file_size_total = file.metadata()?.len();
+
+        Self::parse(
+            DbBytes::Vec(data),
+            padding_size,
+            encrypted_block_size,
+            file_size_total,
+            key,
+        )
+    }
+
+    /// Creates a new `Czdb` instance by memory-mapping the database file.
+    #[cfg(feature = "mmap")]
+    pub fn new_mmap(db_path: &str, key: &str) -> Result<Self, CzError> {
         let key_bytes = general_purpose::STANDARD.decode(&key)?;
         let mut file = File::open(db_path)?;
 
@@ -224,52 +291,111 @@ impl Czdb {
         };
 
         let padding_size = decrypted_bytes.read_u32::<LittleEndian>()?;
-
         let mmap = unsafe {
             MmapOptions::new()
                 .offset((12 + padding_size + encrypted_block_size) as u64)
-                .map(&file)
-        }?;
-        let mut bindata = Cursor::new(mmap);
+                .map(&file)?
+        };
+        let file_size_total = file.metadata()?.len();
 
-        let db_type = if bindata.read_u8()? & 1 == 0 {
+        Self::parse(
+            DbBytes::Mmap(mmap),
+            padding_size,
+            encrypted_block_size,
+            file_size_total,
+            key,
+        )
+    }
+
+    /// Creates a new `Czdb` instance from in-memory bytes of the database file.
+    pub fn new_from_bytes(mut data: Vec<u8>, key: &str) -> Result<Self, CzError> {
+        let key_bytes = general_purpose::STANDARD.decode(&key)?;
+        let total_size = data.len() as u64;
+        let mut cursor = Cursor::new(&data);
+
+        let _version = cursor.read_u32::<LittleEndian>()?;
+        let client_id = cursor.read_u32::<LittleEndian>()?;
+        let encrypted_block_size = cursor.read_u32::<LittleEndian>()?;
+
+        let mut encrypted_bytes = vec![0; encrypted_block_size as usize];
+        cursor.read_exact(&mut encrypted_bytes)?;
+        let cipher = Aes128::new(Key::<Aes128>::from_slice(&key_bytes));
+        let mut decrypted_bytes = cipher
+            .decrypt_padded_mut::<NoPadding>(&mut encrypted_bytes)
+            .map_err(|_| CzError::DecryptionError)?;
+
+        let first_u32 = decrypted_bytes.read_u32::<LittleEndian>()?;
+        if first_u32 >> 20 != client_id {
+            return Err(CzError::InvalidClientId);
+        }
+        let now: u32 = chrono::Local::now()
+            .format("%y%m%d")
+            .to_string()
+            .parse()
+            .map_err(|_| CzError::DatabaseFileCorrupted)?;
+        if now > first_u32 & 0xFFFFF {
+            return Err(CzError::DatabaseExpired);
+        };
+
+        let padding_size = decrypted_bytes.read_u32::<LittleEndian>()?;
+        let offset = 12 + padding_size + encrypted_block_size;
+        let bindata_vec = data.split_off(offset as usize);
+
+        Self::parse(
+            DbBytes::Vec(bindata_vec),
+            padding_size,
+            encrypted_block_size,
+            total_size,
+            key,
+        )
+    }
+
+    fn parse(
+        bindata: DbBytes,
+        padding_size: u32,
+        encrypted_block_size: u32,
+        file_size_total: u64,
+        key: &str,
+    ) -> Result<Self, CzError> {
+        let mut bindata_cursor = Cursor::new(&*bindata);
+        let db_type = if bindata_cursor.read_u8()? & 1 == 0 {
             DbType::Ipv4
         } else {
             DbType::Ipv6
         };
-        let file_size = bindata.read_u32::<LittleEndian>()?;
-        if file.metadata()?.len() != (padding_size + encrypted_block_size + 12 + file_size) as u64 {
+        let file_size = bindata_cursor.read_u32::<LittleEndian>()?;
+        if file_size_total != (padding_size + encrypted_block_size + 12 + file_size) as u64 {
             return Err(CzError::DatabaseFileCorrupted);
         }
-        let _start_index = bindata.read_u32::<LittleEndian>()?;
-        let total_header_block_size = bindata.read_u32::<LittleEndian>()?;
-        let end_index = bindata.read_u32::<LittleEndian>()?;
+        let _start_index = bindata_cursor.read_u32::<LittleEndian>()?;
+        let total_header_block_size = bindata_cursor.read_u32::<LittleEndian>()?;
+        let end_index = bindata_cursor.read_u32::<LittleEndian>()?;
 
         let total_header_block = total_header_block_size / 20;
         let mut buffer = [0; 20];
         let mut index_blocks = BTreeMap::new();
         for _ in 0..total_header_block {
-            bindata.read_exact(&mut buffer)?;
+            bindata_cursor.read_exact(&mut buffer)?;
             let ip = buffer[..16].to_vec();
             let data_ptr = u32::from_le_bytes([buffer[16], buffer[17], buffer[18], buffer[19]]);
             index_blocks.insert(ip, data_ptr);
         }
 
         let column_selection_ptr = end_index + db_type.index_block_len() as u32;
-        bindata.seek(SeekFrom::Start(column_selection_ptr as u64))?;
-        let column_selection = bindata.read_u32::<LittleEndian>()?;
+        bindata_cursor.seek(SeekFrom::Start(column_selection_ptr as u64))?;
+        let column_selection = bindata_cursor.read_u32::<LittleEndian>()?;
         let mut geo_map_data = None;
         if column_selection != 0 {
-            let geo_map_size = bindata.read_u32::<LittleEndian>()?;
+            let geo_map_size = bindata_cursor.read_u32::<LittleEndian>()?;
             let mut buffer = vec![0; geo_map_size as usize];
-            bindata.read_exact(&mut buffer)?;
+            bindata_cursor.read_exact(&mut buffer)?;
             let data = GeoDataDecryptor::new(key)?.decrypt(&buffer);
             geo_map_data = Some(data);
         }
 
         Ok(Czdb {
             db_type,
-            bindata: bindata.into_inner(),
+            bindata,
             index_blocks,
             column_selection,
             geo_map_data,
