@@ -4,7 +4,7 @@
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.rs/czdb)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AldenClark/czdb-rs/blob/main/LICENSE-MIT)
 
-czdb-rs is a simple and fast Rust library for parsing CZDB-format IP databases. It supports both IPv4 and IPv6 lookups and uses memory-mapped files (mmap) to keep memory usage low and speed up disk access. Perfect for quick IP geolocation queries with minimal overhead.
+czdb-rs is a simple and fast Rust library for parsing CZDB-format IP databases. It supports both IPv4 and IPv6 lookups. By default it reads databases using a buffered reader, with optional memory-mapped (`mmap` feature) and fully in-memory loading strategies for faster access or lower overhead.
 
 Note: The database file and key must be obtained from [www.cz88.net](https://cz88.net/geo-public).
 
@@ -13,6 +13,10 @@ Note: The database file and key must be obtained from [www.cz88.net](https://cz8
 ```bash
 cargo add czdb
 ```
+
+### Features
+
+- `mmap` — enable memory-mapped file loading.
 
 ```rust
 use czdb::Czdb;
