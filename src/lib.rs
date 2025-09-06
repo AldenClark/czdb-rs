@@ -90,15 +90,15 @@
 //! - 具体的数据库文件和密钥，请从 [www.cz88.net](https://cz88.net/geo-public) 获取。
 
 use aes::{
-    cipher::{Key, KeyInit},
     Aes128,
+    cipher::{Key, KeyInit},
 };
-use base64::{engine::general_purpose, Engine};
+use base64::{Engine, engine::general_purpose};
 use byteorder::{LittleEndian, ReadBytesExt};
-use cipher::{block_padding::NoPadding, BlockDecryptMut};
+use cipher::{BlockDecryptMut, block_padding::NoPadding};
 #[cfg(feature = "mmap")]
 use memmap2::{Mmap, MmapOptions};
-use rmpv::{decode::read_value, Value};
+use rmpv::{Value, decode::read_value};
 use std::{
     collections::BTreeMap,
     fs::File,
