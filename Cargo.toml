@@ -1,10 +1,10 @@
 [package]
 name = "czdb"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["Alden Clark"]
 license = "MIT"
-readme = "README.MD"
+readme = "README.md"
 repository = "https://github.com/AldenClark/czdb-rs"
 documentation = "https://docs.rs/czdb"
 keywords = ["czdb", "ip", "ipv4", "ipv6"]
