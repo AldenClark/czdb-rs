@@ -420,7 +420,14 @@ impl Czdb {
         };
         let block_len = self.db_type.index_block_len();
         let (_, start_ptr) = self.index_blocks.range(..=ip_bytes.clone()).next_back()?;
-        let end_ptr = match self.index_blocks.range(ip_bytes.clone()..).next() {
+        let end_ptr = match self
+            .index_blocks
+            .range((
+                std::ops::Bound::Excluded(ip_bytes.clone()),
+                std::ops::Bound::Unbounded,
+            ))
+            .next()
+        {
             Some((_, end_ptr)) => *end_ptr,
             None => *start_ptr + block_len as u32,
         };
@@ -502,5 +509,75 @@ impl Czdb {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmpv::encode::write_value;
+    use std::net::Ipv4Addr;
+
+    fn build_test_db() -> Czdb {
+        let block_len = DbType::Ipv4.index_block_len();
+        let mut bindata = vec![0u8; block_len * 2];
+
+        let mut region1 = Vec::new();
+        write_value(&mut region1, &Value::Integer(0.into())).unwrap();
+        write_value(&mut region1, &Value::String("region1".into())).unwrap();
+
+        let mut region2 = Vec::new();
+        write_value(&mut region2, &Value::Integer(0.into())).unwrap();
+        write_value(&mut region2, &Value::String("region2".into())).unwrap();
+
+        let region1_ptr = (block_len * 2) as u32;
+        let region2_ptr = region1_ptr + region1.len() as u32;
+
+        // first block
+        bindata[0..4].copy_from_slice(&[1, 1, 1, 0]);
+        bindata[4..8].copy_from_slice(&[1, 1, 1, 255]);
+        bindata[8..12].copy_from_slice(&region1_ptr.to_le_bytes());
+        bindata[12] = region1.len() as u8;
+
+        // second block
+        let offset = block_len;
+        bindata[offset..offset + 4].copy_from_slice(&[2, 2, 2, 0]);
+        bindata[offset + 4..offset + 8].copy_from_slice(&[2, 2, 2, 255]);
+        bindata[offset + 8..offset + 12].copy_from_slice(&region2_ptr.to_le_bytes());
+        bindata[offset + 12] = region2.len() as u8;
+
+        bindata.extend_from_slice(&region1);
+        bindata.extend_from_slice(&region2);
+
+        let mut index_blocks = BTreeMap::new();
+        index_blocks.insert(vec![1, 1, 1, 0], 0u32);
+        index_blocks.insert(vec![2, 2, 2, 0], offset as u32);
+
+        Czdb {
+            bindata: DbBytes::Vec(bindata),
+            index_blocks,
+            db_type: DbType::Ipv4,
+            column_selection: 0,
+            geo_map_data: None,
+        }
+    }
+
+    #[test]
+    fn search_handles_start_boundary_correctly() {
+        let db = build_test_db();
+        assert_eq!(
+            db.search(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 0))),
+            Some("region1".to_string())
+        );
+    }
+
+    #[test]
+    fn search_returns_expected_results() {
+        let db = build_test_db();
+        assert_eq!(
+            db.search(IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2))),
+            Some("region2".to_string())
+        );
+        assert!(db.search(IpAddr::V4(Ipv4Addr::new(3, 3, 3, 3))).is_none());
     }
 }

@@ -1,3 +1,9 @@
+## v0.1.4
+
+- Fix index range calculation in `search` that could access out-of-bounds data.
+- Add unit tests covering boundary IP lookups.
+- Add Chinese README and documentation updates.
+
 ## v0.1.3
 
 - Added multiple database readers: standard `BufReader`, optional `mmap` (feature), and in-memory loading.
