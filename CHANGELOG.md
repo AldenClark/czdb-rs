@@ -1,6 +1,10 @@
-## v0.1.2
+## v0.1.3
 
 - Added multiple database readers: standard `BufReader`, optional `mmap` (feature), and in-memory loading.
+
+## v0.1.2
+
+- Fixed a binary search indexing bug in the `search` method.
 
 ## v0.1.1
 
