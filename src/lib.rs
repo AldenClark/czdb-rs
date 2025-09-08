@@ -100,7 +100,6 @@ use cipher::{BlockDecryptMut, block_padding::NoPadding};
 use memmap2::{Mmap, MmapOptions};
 use rmpv::{Value, decode::read_value};
 use std::{
-    collections::BTreeMap,
     fs::File,
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
     net::IpAddr,
@@ -203,10 +202,63 @@ pub enum CzError {
 #[derive(Debug)]
 pub struct Czdb {
     bindata: DbBytes,
-    index_blocks: BTreeMap<Vec<u8>, u32>,
+    index_blocks: IndexBlocks,
     db_type: DbType,
     column_selection: u32,
     geo_map_data: Option<Vec<u8>>,
+}
+
+/// A compact representation of the header index blocks. Stores IPs and their
+/// corresponding offsets in structure-of-arrays form to minimize memory usage.
+#[derive(Debug)]
+struct IndexBlocks {
+    ips: Vec<u8>,   // Flattened array of start IP bytes.
+    ptrs: Vec<u32>, // Offsets of the index blocks.
+    ip_len: usize,  // Length of each IP in bytes.
+}
+
+impl IndexBlocks {
+    /// Constructs `IndexBlocks` from the header information in the database.
+    fn new(cursor: &mut Cursor<&[u8]>, total: u32, ip_len: usize) -> Result<Self, CzError> {
+        let mut ips = Vec::with_capacity(total as usize * ip_len);
+        let mut ptrs = Vec::with_capacity(total as usize);
+        let mut buffer = [0u8; 20];
+        for _ in 0..total {
+            cursor.read_exact(&mut buffer)?;
+            ips.extend_from_slice(&buffer[..ip_len]);
+            ptrs.push(u32::from_le_bytes([
+                buffer[16], buffer[17], buffer[18], buffer[19],
+            ]));
+        }
+        Ok(Self { ips, ptrs, ip_len })
+    }
+
+    /// Locates the range of index blocks that may contain the target IP.
+    fn locate(&self, ip: &[u8], block_len: usize) -> Option<(u32, u32)> {
+        let n = self.ptrs.len();
+        if n == 0 {
+            return None;
+        }
+        let mut l = 0usize;
+        let mut r = n - 1;
+        while l < r {
+            let m = (l + r + 1) / 2; // upper mid to find last <= ip
+            let start = m * self.ip_len;
+            let ip_m = &self.ips[start..start + self.ip_len];
+            if ip_m <= ip {
+                l = m;
+            } else {
+                r = m - 1;
+            }
+        }
+        let start_ptr = self.ptrs[l];
+        let end_ptr = if l + 1 < n {
+            self.ptrs[l + 1]
+        } else {
+            start_ptr + block_len as u32
+        };
+        Some((start_ptr, end_ptr))
+    }
 }
 
 impl Czdb {
@@ -372,14 +424,8 @@ impl Czdb {
         let end_index = bindata_cursor.read_u32::<LittleEndian>()?;
 
         let total_header_block = total_header_block_size / 20;
-        let mut buffer = [0; 20];
-        let mut index_blocks = BTreeMap::new();
-        for _ in 0..total_header_block {
-            bindata_cursor.read_exact(&mut buffer)?;
-            let ip = buffer[..16].to_vec();
-            let data_ptr = u32::from_le_bytes([buffer[16], buffer[17], buffer[18], buffer[19]]);
-            index_blocks.insert(ip, data_ptr);
-        }
+        let index_blocks =
+            IndexBlocks::new(&mut bindata_cursor, total_header_block, db_type.bytes_len())?;
 
         let column_selection_ptr = end_index + db_type.index_block_len() as u32;
         bindata_cursor.seek(SeekFrom::Start(column_selection_ptr as u64))?;
@@ -419,26 +465,15 @@ impl Czdb {
             IpAddr::V6(ip) => ip.octets().to_vec(),
         };
         let block_len = self.db_type.index_block_len();
-        let (_, start_ptr) = self.index_blocks.range(..=ip_bytes.clone()).next_back()?;
-        let end_ptr = match self
-            .index_blocks
-            .range((
-                std::ops::Bound::Excluded(ip_bytes.clone()),
-                std::ops::Bound::Unbounded,
-            ))
-            .next()
-        {
-            Some((_, end_ptr)) => *end_ptr,
-            None => *start_ptr + block_len as u32,
-        };
+        let (start_ptr, end_ptr) = self.index_blocks.locate(&ip_bytes, block_len)?;
 
         let ip_len = self.db_type.bytes_len();
 
         let mut l = 0;
-        let mut r = (end_ptr as usize - *start_ptr as usize) / block_len - 1;
+        let mut r = (end_ptr as usize - start_ptr as usize) / block_len - 1;
         while l <= r {
             let m = (l + r) >> 1;
-            let p = *start_ptr as usize + m * block_len;
+            let p = start_ptr as usize + m * block_len;
             let start_ip = &self.bindata[p..p + ip_len];
             let end_ip = &self.bindata[p + ip_len..p + ip_len * 2];
             if start_ip <= &ip_bytes && end_ip >= &ip_bytes {
@@ -549,9 +584,11 @@ mod tests {
         bindata.extend_from_slice(&region1);
         bindata.extend_from_slice(&region2);
 
-        let mut index_blocks = BTreeMap::new();
-        index_blocks.insert(vec![1, 1, 1, 0], 0u32);
-        index_blocks.insert(vec![2, 2, 2, 0], offset as u32);
+        let index_blocks = IndexBlocks {
+            ips: vec![1, 1, 1, 0, 2, 2, 2, 0],
+            ptrs: vec![0u32, offset as u32],
+            ip_len: 4,
+        };
 
         Czdb {
             bindata: DbBytes::Vec(bindata),
