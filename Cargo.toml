@@ -1,6 +1,6 @@
 [package]
 name = "czdb"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 authors = ["Alden Clark"]
 license = "MIT"
@@ -24,3 +24,7 @@ byteorder = "^1.5"
 [features]
 default = []
 mmap = ["memmap2"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
