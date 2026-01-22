@@ -1,3 +1,9 @@
+## v0.2.1
+
+- Add doc feature annotations to show required features in docs.rs.
+
+- 为 docs.rs 文档添加 feature 标记
+
 ## v0.2.0
 
 - Split APIs into `CzdbDisk`, `CzdbMmap`, and `CzdbMemory` for clearer mode separation.
