@@ -1,3 +1,9 @@
+## v0.2.2
+
+- Fix docs.rs build by enabling `doc_cfg` on docs.rs and correcting the `doc(cfg)` feature name to `mmap`.
+
+- 修复 docs.rs 构建：在 docs.rs 下启用 `doc_cfg`，并将 `doc(cfg)` 的 feature 名称更正为 `mmap`。
+
 ## v0.2.1
 
 - Add doc feature annotations to show required features in docs.rs.

@@ -61,18 +61,20 @@
 //! }
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 mod common;
 mod disk;
 mod memory;
 #[cfg(feature = "mmap")]
-#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+#[cfg_attr(docsrs, doc(cfg(feature = "mmap")))]
 mod mmap;
 
 pub use common::DbType;
 pub use disk::CzdbDisk;
 pub use memory::CzdbMemory;
 #[cfg(feature = "mmap")]
-#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+#[cfg_attr(docsrs, doc(cfg(feature = "mmap")))]
 pub use mmap::CzdbMmap;
 
 /// Possible errors returned by CZDB operations.
